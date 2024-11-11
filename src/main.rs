@@ -1,10 +1,16 @@
-use iced::widget::{button, column, container, horizontal_space, row, text, text_editor, tooltip};
+use iced::highlighter::{self, Highlighter};
+use iced::theme;
+use iced::widget::{
+    button, column, container, horizontal_space, pick_list, row, text, text_editor, tooltip,
+};
 use iced::{executor, Application, Command, Element, Font, Length, Settings, Theme};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+
 fn main() -> iced::Result {
     Editor::run(Settings {
+        default_font: Font::MONOSPACE,
         fonts: vec![include_bytes!("../fonts/editor.ttf").as_slice().into()],
         ..Settings::default()
     })
@@ -14,6 +20,7 @@ struct Editor {
     path: Option<PathBuf>,
     content: text_editor::Content,
     error: Option<Error>,
+    theme: highlighter::Theme,
 }
 #[derive(Debug, Clone)]
 enum Message {
@@ -23,6 +30,7 @@ enum Message {
     Open,
     Save,
     FileSaved(Result<PathBuf, Error>),
+    ThemeSelected(highlighter::Theme),
 }
 
 impl Application for Editor {
@@ -37,6 +45,7 @@ impl Application for Editor {
                 content: text_editor::Content::new(),
                 error: None,
                 path: None,
+                theme: highlighter::Theme::Base16Mocha,
             },
             Command::perform(load_file(default_file()), Message::FileOpened),
         )
@@ -82,17 +91,41 @@ impl Application for Editor {
                 let text = self.content.text();
                 Command::perform(save_file(self.path.clone(), text), Message::FileSaved)
             }
+            Message::ThemeSelected(theme) => {
+                self.theme = theme;
+
+                Command::none()
+            }
         }
     }
 
     fn view(&self) -> Element<'_, Self::Message> {
         let controls = row![
-            action(new_icon(), Message::New,"new file"),
-            action(open_icon(), Message::Open,"choose a file to open"),
-            action(save_icon(), Message::Save,"Save")
+            action(new_icon(), Message::New, "new file"),
+            action(open_icon(), Message::Open, "choose a file to open"),
+            action(save_icon(), Message::Save, "Save"),
+            horizontal_space(Length::Fill),
+            pick_list(
+                highlighter::Theme::ALL,
+                Some(self.theme),
+                Message::ThemeSelected
+            )
         ]
         .spacing(15);
-        let input = text_editor(&self.content).on_edit(Message::Edit);
+        let input = text_editor(&self.content)
+            .on_edit(Message::Edit)
+            .highlight::<Highlighter>(
+                highlighter::Settings {
+                    theme: highlighter::Theme::InspiredGitHub,
+                    extension: self
+                        .path
+                        .as_ref()
+                        .and_then(|path| path.extension()?.to_str())
+                        .unwrap_or("txt")
+                        .to_string(),
+                },
+                |highlight, _theme| highlight.to_format(),
+            );
         let status_bar = {
             let status = if let Some(Error::IOFailed(error)) = self.error.as_ref() {
                 text(error.to_string())
@@ -115,7 +148,11 @@ impl Application for Editor {
     }
 
     fn theme(&self) -> Theme {
-        Theme::Dark
+        if self.theme.is_dark() {
+            Theme::Dark
+        } else {
+            Theme::Light
+        }
     }
 }
 
@@ -137,6 +174,7 @@ fn action<'a>(
         label,
         tooltip::Position::FollowCursor,
     )
+    .style(theme::Container::Box)
     .into()
 }
 
