@@ -1,9 +1,10 @@
 use iced::highlighter::{self, Highlighter};
+use iced::keyboard;
 use iced::theme;
 use iced::widget::{
     button, column, container, horizontal_space, pick_list, row, text, text_editor, tooltip,
 };
-use iced::{executor, Application, Command, Element, Font, Length, Settings, Theme};
+use iced::{executor, Application, Command, Element, Font, Length, Settings, Subscription, Theme};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -21,6 +22,7 @@ struct Editor {
     content: text_editor::Content,
     error: Option<Error>,
     theme: highlighter::Theme,
+    is_dirty: bool,
 }
 #[derive(Debug, Clone)]
 enum Message {
@@ -45,7 +47,8 @@ impl Application for Editor {
                 content: text_editor::Content::new(),
                 error: None,
                 path: None,
-                theme: highlighter::Theme::Base16Mocha,
+                theme: highlighter::Theme::Base16Eighties,
+                is_dirty: true,
             },
             Command::perform(load_file(default_file()), Message::FileOpened),
         )
@@ -58,19 +61,21 @@ impl Application for Editor {
     fn update(&mut self, message: Self::Message) -> Command<Message> {
         match message {
             Message::Edit(action) => {
-                self.content.edit(action);
+                self.is_dirty = self.is_dirty || action.is_edit();
                 self.error = None;
+                self.content.edit(action);
                 Command::none()
             }
             Message::New => {
                 self.path = None;
                 self.content = text_editor::Content::new();
-
+                self.is_dirty = true;
                 Command::none()
             }
             Message::FileOpened(Ok((path, content))) => {
                 self.path = Some(path);
                 self.content = text_editor::Content::with(&content);
+                self.is_dirty = false;
 
                 Command::none()
             }
@@ -80,6 +85,7 @@ impl Application for Editor {
             }
             Message::FileSaved(Ok(path)) => {
                 self.path = Some(path);
+                self.is_dirty = false;
                 Command::none()
             }
             Message::FileSaved(Err(error)) => {
@@ -99,11 +105,18 @@ impl Application for Editor {
         }
     }
 
+    fn subscription(&self) -> Subscription<Message> {
+        keyboard::on_key_press(|key_code, modifiers| match key_code {
+            keyboard::KeyCode::S if modifiers.command() => Some(Message::Save),
+            _ => None,
+        })
+    }
+
     fn view(&self) -> Element<'_, Self::Message> {
         let controls = row![
-            action(new_icon(), Message::New, "new file"),
-            action(open_icon(), Message::Open, "choose a file to open"),
-            action(save_icon(), Message::Save, "Save"),
+            action(new_icon(), Some(Message::New), "New File"),
+            action(open_icon(), Some(Message::Open), "Open File"),
+            action(save_icon(), self.is_dirty.then_some(Message::Save), "Save"),
             horizontal_space(Length::Fill),
             pick_list(
                 highlighter::Theme::ALL,
@@ -116,12 +129,12 @@ impl Application for Editor {
             .on_edit(Message::Edit)
             .highlight::<Highlighter>(
                 highlighter::Settings {
-                    theme: highlighter::Theme::InspiredGitHub,
+                    theme: self.theme,
                     extension: self
                         .path
                         .as_ref()
                         .and_then(|path| path.extension()?.to_str())
-                        .unwrap_or("txt")
+                        .unwrap_or("rs")
                         .to_string(),
                 },
                 |highlight, _theme| highlight.to_format(),
@@ -164,13 +177,19 @@ fn icon<'a>(codepoint: char) -> Element<'a, Message> {
 
 fn action<'a>(
     content: Element<'a, Message>,
-    on_press: Message,
+    on_press: Option<Message>,
     label: &str,
 ) -> Element<'a, Message> {
+    let is_disabled = on_press.is_none();
     tooltip(
         button(container(content).width(30).center_x())
-            .on_press(on_press)
-            .padding([5, 10]),
+            .on_press_maybe(on_press)
+            .padding([5, 10])
+            .style(if is_disabled {
+                theme::Button::Secondary
+            } else {
+                theme::Button::Primary
+            }),
         label,
         tooltip::Position::FollowCursor,
     )
